@@ -1,0 +1,6 @@
+python-telegram-bot[job-queue]>=21.0
+python-dotenv>=1.0
+feedparser>=6.0
+deep-translator>=1.11
+httpx>=0.27
+Pillow>=10.0
