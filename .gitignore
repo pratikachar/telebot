@@ -1,5 +1,7 @@
 # Secrets - never commit keys
 .env
+git com info.txt
+keys.txt
 
 # Python
 __pycache__/
