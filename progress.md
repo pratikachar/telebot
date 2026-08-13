@@ -28,13 +28,17 @@ Telegram multipurpose personal-assistant bot (Python). Goal: 100% free, no credi
 - [x] Robustness: `llm.chat()` wrapped so it NEVER raises — per-provider + per-model try/except, empty results ignored, config bugs contained. Returns (text, provider) or (None, None); handlers give friendly messages. Compiles OK.
 - [x] Retry: `llm.chat()` now does up to 2 full cascade passes (`attempts=2`) per request for transient failures; still bounded (no infinite loop).
 - [x] Gmail decision: user skips email for now — `/email` already returns a clean "not configured" message when GMAIL_* are blank (no code change needed).
+- [x] Global owner lock: added `owner_only()` decorator in handlers.py; applied to ALL handlers in main.py (commands + echo + photo + menu callback). Bot now replies "This bot is private." to anyone not in OWNER_ID. OWNER_ID set in .env.
+- [x] New `/summarize <path>` command: reads local file (up to 2000 lines / 8k chars) and summarizes via LLM cascade. Gated by desktop owner check. Registered in main.py + HELP updated.
+- [x] Deps installed: `py -m pip install -r requirements.txt` (python-telegram-bot 22.8, feedparser, deep-translator, apscheduler). Bot boots clean, no errors.
+- [x] Verified: LLM cascade returns real response via Gemini 3.6 Flash with live keys; all 4 providers configured.
 
 ## Next steps (ordered)
-1. User pastes BOT_TOKEN in .env -> run `py main.py` -> test all commands from phone (PC on).
-2. Add at least GEMINI_API_KEY (free) for /ask + study photos; optionally GROQ_API_KEY and ZAI_API_KEY for cascade fallback.
-3. Optional: set OWNER_ID + DESKTOP_CONTROL=1 to use desktop control; add GMAIL_USER/APP_PASSWORD for /email; TMDB_API_KEY for /movies.
-4. Verify real LLM cascade responses once a key is added.
-5. Deploy 24/7: Termux on old phone (steps in ROADMAP section 8).
+1. User runs `py main.py` (PC on, keep window open) -> test commands from phone: /ask, /news, /weather, /summarize <file>, /remind, /digest.
+2. Verify daily digest fires at set time (IST) while PC is on; /settime to change.
+3. Optional: add GMAIL_USER/APP_PASSWORD for /email; TMDB_API_KEY for /movies (TMDB site was unreachable, skipped for now).
+4. Optional 24/7: Termux on old phone (steps in ROADMAP section 8).
+5. Commit to local git (`.env` is gitignored, keys stay safe).
 
 ## Active bugs / errors
 - None known. Yahoo Finance can transiently rate-limit (mitigated by query1/query2 fallback + pct-from-prev fix).

@@ -14,6 +14,17 @@ import services
 
 TZ = ZoneInfo("Asia/Kolkata")
 
+
+def owner_only(fn):
+    async def wrapper(update, context):
+        if not config.is_owner(update.effective_chat.id):
+            if update.message:
+                await update.message.reply_text("\U0001F6AB This bot is private.")
+            return
+        return await fn(update, context)
+
+    return wrapper
+
 WELCOME = (
     "Hello! I'm your personal assistant bot. \U0001F916\n\n"
     "I can help you with:\n"
@@ -53,7 +64,9 @@ HELP = (
     "/digest - run the morning digest right now\n"
     "/study - how exam prep works\n\n"
     "Owner-only desktop (needs DESKTOP_CONTROL=1):\n"
-    "/files [path] - list folder  |  /read <file>  |  /open <app>  |  /shot  |  /install <app>"
+    "/files [path] - list folder  |  /read <file>  |  /open <app>  |  /shot  |  /install <app>\n"
+    "/summarize <file> - summarize a local text file (owner + desktop only)"
+    "\n\nThis bot is private - only the owner can use it."
 )
 
 STUDY = (
@@ -491,6 +504,40 @@ async def read_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _reply(update, desktop.read_file(path))
     except Exception as exc:
         await update.message.reply_text(f"Error: {exc}")
+
+
+async def summarize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    path = " ".join(context.args).strip()
+    if not path:
+        await update.message.reply_text("Usage: /summarize <file path>")
+        return
+    try:
+        text = desktop.read_file(path, max_lines=2000)
+    except Exception as exc:
+        await update.message.reply_text(f"Read failed: {exc}")
+        return
+    if len(text) > 8000:
+        text = text[:8000]
+    await update.message.reply_text("Summarizing \U0001F9E0...")
+    messages = [
+        {"role": "system", "content": "Summarize the following file content concisely in bullet points."},
+        {"role": "user", "content": text},
+    ]
+    try:
+        answer, provider = await llm.chat(messages)
+    except Exception as exc:
+        await update.message.reply_text(f"Summarize failed: {exc}")
+        return
+    if not answer:
+        await update.message.reply_text(
+            "No AI provider configured. Add a free key (GEMINI_API_KEY) in .env to summarize."
+        )
+        return
+    await _reply(update, answer)
+    await update.message.reply_text(f"_via {provider}_")
 
 
 async def open_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

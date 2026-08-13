@@ -35,6 +35,7 @@ COMMANDS = [
     ("digest", handlers.digest_command),
     ("files", handlers.files_command),
     ("read", handlers.read_command),
+    ("summarize", handlers.summarize_command),
     ("open", handlers.open_command),
     ("shot", handlers.shot_command),
     ("install", handlers.install_command),
@@ -47,12 +48,12 @@ def main() -> None:
     application = Application.builder().token(BOT_TOKEN).build()
 
     for name, fn in COMMANDS:
-        application.add_handler(CommandHandler(name, fn))
+        application.add_handler(CommandHandler(name, handlers.owner_only(fn)))
     application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.echo)
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.owner_only(handlers.echo))
     )
-    application.add_handler(MessageHandler(filters.PHOTO, handlers.photo))
-    application.add_handler(CallbackQueryHandler(handlers.menu_button))
+    application.add_handler(MessageHandler(filters.PHOTO, handlers.owner_only(handlers.photo)))
+    application.add_handler(CallbackQueryHandler(handlers.owner_only(handlers.menu_button)))
 
     schedule_all(application.job_queue)
     resume_reminders(application.job_queue)
