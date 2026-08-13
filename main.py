@@ -1,5 +1,6 @@
 import logging
 
+from telegram import BotCommand
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 import db
@@ -36,16 +37,59 @@ COMMANDS = [
     ("files", handlers.files_command),
     ("read", handlers.read_command),
     ("summarize", handlers.summarize_command),
+    ("create", handlers.create_command),
+    ("append", handlers.append_command),
+    ("delete", handlers.delete_command),
     ("open", handlers.open_command),
     ("shot", handlers.shot_command),
     ("install", handlers.install_command),
 ]
 
+COMMAND_DESCRIPTIONS = [
+    ("start", "Welcome message"),
+    ("help", "List all commands"),
+    ("menu", "Buttons menu"),
+    ("study", "How exam prep works"),
+    ("news", "Headlines (topic or language)"),
+    ("weather", "Weather for a city"),
+    ("stocks", "Sensex, Nifty & crypto"),
+    ("movies", "Now showing in India"),
+    ("books", "Search books"),
+    ("songs", "Song suggestions"),
+    ("recipe", "Recipe ideas"),
+    ("translate", "Translate text"),
+    ("ask", "Chat with AI"),
+    ("reset", "Clear chat memory"),
+    ("email", "Email a message"),
+    ("remind", "Set a reminder"),
+    ("todo", "Manage todos"),
+    ("setcity", "Save your city"),
+    ("settime", "Set digest time"),
+    ("digest", "Run morning digest"),
+    ("files", "List folder on PC"),
+    ("read", "Read a file on PC"),
+    ("summarize", "Summarize a file"),
+    ("create", "Create a new file"),
+    ("append", "Append to a file"),
+    ("delete", "Delete a file"),
+    ("open", "Open an app"),
+    ("shot", "Take a screenshot"),
+    ("install", "Install via winget"),
+]
+
+
+async def register_commands(app) -> None:
+    await app.bot.set_my_commands(
+        [BotCommand(name, desc) for name, desc in COMMAND_DESCRIPTIONS]
+    )
+
 
 def main() -> None:
     db.init_db()
 
-    application = Application.builder().token(BOT_TOKEN).build()
+    application = (
+        Application.builder().token(BOT_TOKEN).post_init(register_commands).build()
+    )
 
     for name, fn in COMMANDS:
         application.add_handler(CommandHandler(name, handlers.owner_only(fn)))

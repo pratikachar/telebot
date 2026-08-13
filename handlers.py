@@ -1,4 +1,5 @@
 import datetime
+import os
 import re
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -24,6 +25,15 @@ def owner_only(fn):
         return await fn(update, context)
 
     return wrapper
+
+
+def _resolve_path(path):
+    """Bare filenames (no drive/folder) are resolved to the user's Desktop."""
+    path = path.strip()
+    if not os.path.isabs(path) and "\\" not in path and "/" not in path:
+        desktop_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+        return os.path.join(desktop_dir, path)
+    return path
 
 WELCOME = (
     "Hello! I'm your personal assistant bot. \U0001F916\n\n"
@@ -64,8 +74,12 @@ HELP = (
     "/digest - run the morning digest right now\n"
     "/study - how exam prep works\n\n"
     "Owner-only desktop (needs DESKTOP_CONTROL=1):\n"
-    "/files [path] - list folder  |  /read <file>  |  /open <app>  |  /shot  |  /install <app>\n"
-    "/summarize <file> - summarize a local text file (owner + desktop only)"
+    "/files [path] - list folder (max 60)  |  /files -r [path] - list recursively (max 60 files)\n"
+    "/read <file>  |  /open <app>  |  /shot  |  /install <app>\n"
+    "/summarize <file> - summarize a local text file (owner + desktop only)\n"
+    "/create <file> [text] - create a new text file (owner + desktop only)\n"
+    "/append <file> <text> - add a line to a file (owner + desktop only)\n"
+    "/delete <file> - delete a file (owner + desktop only)"
     "\n\nThis bot is private - only the owner can use it."
 )
 
@@ -485,9 +499,10 @@ async def files_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not _desktop_ok(update):
         await update.message.reply_text("Desktop control is disabled or you're not the owner.")
         return
-    path = " ".join(context.args).strip()
+    recursive = bool(context.args and context.args[0] == "-r")
+    path = " ".join(context.args[1:] if recursive else context.args).strip()
     try:
-        await _reply(update, desktop.list_dir(path))
+        await _reply(update, desktop.list_dir(path, recursive=recursive))
     except Exception as exc:
         await update.message.reply_text(f"Error: {exc}")
 
@@ -496,7 +511,7 @@ async def read_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not _desktop_ok(update):
         await update.message.reply_text("Desktop control is disabled or you're not the owner.")
         return
-    path = " ".join(context.args).strip()
+    path = _resolve_path(" ".join(context.args).strip())
     if not path:
         await update.message.reply_text("Usage: /read <file path>")
         return
@@ -510,7 +525,7 @@ async def summarize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not _desktop_ok(update):
         await update.message.reply_text("Desktop control is disabled or you're not the owner.")
         return
-    path = " ".join(context.args).strip()
+    path = _resolve_path(" ".join(context.args).strip())
     if not path:
         await update.message.reply_text("Usage: /summarize <file path>")
         return
@@ -538,6 +553,45 @@ async def summarize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     await _reply(update, answer)
     await update.message.reply_text(f"_via {provider}_")
+
+
+async def create_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /create <file path> [text]")
+        return
+    path = _resolve_path(context.args[0])
+    # Everything after the first argument is the file content (optional)
+    text = " ".join(context.args[1:]) if len(context.args) > 1 else ""
+    result = desktop.create_file(path, text)
+    await update.message.reply_text(result)
+
+
+async def append_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /append <file path> <text to add>")
+        return
+    path = _resolve_path(context.args[0])
+    text = " ".join(context.args[1:])
+    result = desktop.append_file(path, text)
+    await update.message.reply_text(result)
+
+
+async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /delete <file path>")
+        return
+    path = _resolve_path(context.args[0])
+    result = desktop.delete_file(path)
+    await update.message.reply_text(result)
 
 
 async def open_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

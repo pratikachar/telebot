@@ -32,6 +32,8 @@ Telegram multipurpose personal-assistant bot (Python). Goal: 100% free, no credi
 - [x] New `/summarize <path>` command: reads local file (up to 2000 lines / 8k chars) and summarizes via LLM cascade. Gated by desktop owner check. Registered in main.py + HELP updated.
 - [x] Deps installed: `py -m pip install -r requirements.txt` (python-telegram-bot 22.8, feedparser, deep-translator, apscheduler). Bot boots clean, no errors.
 - [x] Verified: LLM cascade returns real response via Gemini 3.6 Flash with live keys; all 4 providers configured.
+- [x] Desktop file write/create hardened: `create_file` checks dir/permission, auto-creates parent dirs, verifies write; `/create` routes bare filenames to Desktop.
+- [x] Added file ops: `/append <file> <text>` (desktop.append_file), `/delete <file>` (desktop.delete_file, refuses dirs/missing). Registered in main.py + HELP. `_resolve_path` helper makes bare names -> Desktop for /read /summarize /create /append /delete. Compiles + tested OK.
 
 ## Next steps (ordered)
 1. User runs `py main.py` (PC on, keep window open) -> test commands from phone: /ask, /news, /weather, /summarize <file>, /remind, /digest.
