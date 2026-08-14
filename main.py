@@ -41,8 +41,10 @@ COMMANDS = [
     ("append", handlers.append_command),
     ("delete", handlers.delete_command),
     ("open", handlers.open_command),
+    ("close", handlers.close_command),
     ("shot", handlers.shot_command),
     ("install", handlers.install_command),
+    ("uninstall", handlers.uninstall_command),
 ]
 
 COMMAND_DESCRIPTIONS = [
@@ -73,8 +75,10 @@ COMMAND_DESCRIPTIONS = [
     ("append", "Append to a file"),
     ("delete", "Delete a file"),
     ("open", "Open an app"),
+    ("close", "Close an app/window"),
     ("shot", "Take a screenshot"),
     ("install", "Install via winget"),
+    ("uninstall", "Uninstall via winget"),
 ]
 
 

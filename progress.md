@@ -34,6 +34,9 @@ Telegram multipurpose personal-assistant bot (Python). Goal: 100% free, no credi
 - [x] Verified: LLM cascade returns real response via Gemini 3.6 Flash with live keys; all 4 providers configured.
 - [x] Desktop file write/create hardened: `create_file` checks dir/permission, auto-creates parent dirs, verifies write; `/create` routes bare filenames to Desktop.
 - [x] Added file ops: `/append <file> <text>` (desktop.append_file), `/delete <file>` (desktop.delete_file, refuses dirs/missing). Registered in main.py + HELP. `_resolve_path` helper makes bare names -> Desktop for /read /summarize /create /append /delete. Compiles + tested OK.
+- [x] `/files -r <path>` recursive listing (max 60 files); HELP shows caps for both modes.
+- [x] App control: `/close <app>` (taskkill by process name, maps friendly names) + `/uninstall <app>` (winget uninstall, shared allowlist). Registered in main.py, COMMAND_DESCRIPTIONS, HELP. Tested: launched notepad -> closed OK; uninstall rejects non-allowlist.
+- [x] Telegram command menu: `post_init` registers all 29 commands via `set_my_commands` (verified getMyCommands returns all; setMyCommands 200 OK).
 
 ## Next steps (ordered)
 1. User runs `py main.py` (PC on, keep window open) -> test commands from phone: /ask, /news, /weather, /summarize <file>, /remind, /digest.

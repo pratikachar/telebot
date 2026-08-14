@@ -75,7 +75,7 @@ HELP = (
     "/study - how exam prep works\n\n"
     "Owner-only desktop (needs DESKTOP_CONTROL=1):\n"
     "/files [path] - list folder (max 60)  |  /files -r [path] - list recursively (max 60 files)\n"
-    "/read <file>  |  /open <app>  |  /shot  |  /install <app>\n"
+    "/read <file>  |  /open <app>  |  /close <app>  |  /shot  |  /install <app>  |  /uninstall <app>\n"
     "/summarize <file> - summarize a local text file (owner + desktop only)\n"
     "/create <file> [text] - create a new text file (owner + desktop only)\n"
     "/append <file> <text> - add a line to a file (owner + desktop only)\n"
@@ -606,6 +606,35 @@ async def open_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(desktop.open_app(app))
     except Exception as exc:
         await update.message.reply_text(f"Error: {exc}")
+
+
+async def close_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    app = " ".join(context.args).strip()
+    if not app:
+        await update.message.reply_text("Usage: /close <app> (notepad, calc, chrome, explorer...)")
+        return
+    try:
+        await update.message.reply_text(desktop.close_app(app))
+    except Exception as exc:
+        await update.message.reply_text(f"Error: {exc}")
+
+
+async def uninstall_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    app = " ".join(context.args).strip()
+    if not app:
+        await update.message.reply_text("Usage: /uninstall <app> (same allowlist as /install)")
+        return
+    await update.message.reply_text(f"Uninstalling {app} via winget... \U000023F3")
+    try:
+        await _reply(update, desktop.uninstall(app))
+    except Exception as exc:
+        await update.message.reply_text(f"Uninstall failed: {exc}")
 
 
 async def shot_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

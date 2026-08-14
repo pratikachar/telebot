@@ -97,14 +97,6 @@ def delete_file(path):
         return f"Deleted: {abs_path}"
     except Exception as exc:
         return f"Failed to delete: {exc}"
-    except PermissionError:
-        return (
-            f"Permission denied: cannot write to '{path}'.\n"
-            "Avoid system-protected locations like C:\\ root. Use your Desktop, e.g.:\n"
-            "C:\\Users\\Pratik\\Desktop\\test.txt  (or just: test.txt)"
-        )
-    except Exception as exc:
-        return f"Failed to create file: {exc}"
 
 
 APPS = {
@@ -132,6 +124,42 @@ def open_app(app):
     return f"Launched: {target}"
 
 
+def close_app(app):
+    """Close an app by name (maps friendly names) or by process name."""
+    app = app.strip().lower()
+    proc = APPS.get(app, app)
+    if not proc.endswith(".exe"):
+        proc += ".exe"
+    result = subprocess.run(
+        ["taskkill", "/IM", proc, "/F"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    output = (result.stdout or "") + (result.stderr or "")
+    if "SUCCESS" in output or "successfully" in output.lower():
+        return f"Closed: {proc}"
+    return f"Could not close {proc}:\n{output[-500:]}"
+
+
+def uninstall(app):
+    """Uninstall via winget using the same allowlist as /install."""
+    name = app.strip().lower()
+    if name not in INSTALL_ALLOWLIST:
+        return (
+            f"'{app}' is not on the allowlist. Allowed: {', '.join(INSTALL_ALLOWLIST)}"
+        )
+    pkg = PACKAGE_MAP.get(name, name)
+    result = subprocess.run(
+        ["winget", "uninstall", "--id", pkg, "--accept-source-agreements"],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    output = (result.stdout or "") + (result.stderr or "")
+    return f"winget uninstall {pkg}:\n{output[-1500:]}"
+
+
 def screenshot():
     from PIL import ImageGrab
 
@@ -142,40 +170,37 @@ def screenshot():
     return buf
 
 
+INSTALL_ALLOWLIST = [
+    "node", "nodejs", "git", "python", "python3", "notepadplusplus", "7zip",
+    "vlc", "spotify", "discord", "obs", "ffmpeg", "code", "gcc", "docker",
+]
+
+PACKAGE_MAP = {
+    "node": "OpenJS.NodeJS.LTS",
+    "nodejs": "OpenJS.NodeJS.LTS",
+    "python": "Python.Python.3.13",
+    "python3": "Python.Python.3.13",
+    "code": "Microsoft.VisualStudioCode",
+    "git": "Git.Git",
+    "notepadplusplus": "Notepad++.Notepad++",
+    "7zip": "7zip.7zip",
+    "vlc": "VideoLAN.VLC",
+    "spotify": "Spotify.Spotify",
+    "discord": "Discord.Discord",
+    "obs": "OBSProject.OBSStudio",
+    "ffmpeg": "Gyan.FFmpeg",
+    "docker": "Docker.DockerDesktop",
+    "gcc": "GCC",
+}
+
+
 def install(app):
-    allowed = ["node", "nodejs", "git", "python", "python3", "notepadplusplus", "7zip",
-               "vlc", "spotify", "discord", "obs", "ffmpeg", "code", "gcc", "docker"]
     name = app.strip().lower()
-    if name not in allowed:
+    if name not in INSTALL_ALLOWLIST:
         return (
-            f"'{app}' is not on the allowlist. Allowed: {', '.join(allowed)}"
+            f"'{app}' is not on the allowlist. Allowed: {', '.join(INSTALL_ALLOWLIST)}"
         )
-    if name in ("node", "nodejs"):
-        pkg = "OpenJS.NodeJS.LTS"
-    elif name == "python":
-        pkg = "Python.Python.3.13"
-    elif name == "code":
-        pkg = "Microsoft.VisualStudioCode"
-    elif name == "git":
-        pkg = "Git.Git"
-    elif name == "notepadplusplus":
-        pkg = "Notepad++.Notepad++"
-    elif name == "7zip":
-        pkg = "7zip.7zip"
-    elif name == "vlc":
-        pkg = "VideoLAN.VLC"
-    elif name == "spotify":
-        pkg = "Spotify.Spotify"
-    elif name == "discord":
-        pkg = "Discord.Discord"
-    elif name == "obs":
-        pkg = "OBSProject.OBSStudio"
-    elif name == "ffmpeg":
-        pkg = "Gyan.FFmpeg"
-    elif name == "docker":
-        pkg = "Docker.DockerDesktop"
-    else:
-        pkg = name
+    pkg = PACKAGE_MAP.get(name, name)
     result = subprocess.run(
         ["winget", "install", "--id", pkg, "--accept-package-agreements", "--accept-source-agreements"],
         capture_output=True,
