@@ -308,3 +308,55 @@ def translate(text, target):
     from deep_translator import GoogleTranslator
 
     return GoogleTranslator(source="auto", target=target).translate(text)
+
+
+async def web_search(query, num=5):
+    """Free no-key web search via DuckDuckGo HTML. Returns list of (title, url, snippet)."""
+    from bs4 import BeautifulSoup
+    from urllib.parse import parse_qs, urlparse
+
+    def _real_url(href):
+        if href and "duckduckgo.com/l/?" in href:
+            qs = parse_qs(urlparse(href).query)
+            if "uddg" in qs:
+                return qs["uddg"][0]
+        return href or ""
+
+    url = f"https://duckduckgo.com/html/?q={quote(query)}"
+    async with httpx.AsyncClient(timeout=20, headers=UA, follow_redirects=True) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    results = []
+    for res in soup.select(".result"):
+        a = res.select_one("a.result__a")
+        if not a:
+            continue
+        title = a.get_text(" ", strip=True)
+        link = _real_url(a.get("href", ""))
+        snippet_el = res.select_one(".result__snippet")
+        snippet = snippet_el.get_text(" ", strip=True) if snippet_el else ""
+        results.append((title, link, snippet))
+        if len(results) >= num:
+            break
+    return results
+
+
+async def transcribe_voice(audio_path):
+    """Transcribe an audio file with Groq Whisper (free tier). Returns text."""
+    from config import GROQ_API_KEY
+
+    if not GROQ_API_KEY:
+        return None
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
+    with open(audio_path, "rb") as f:
+        data = f.read()
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers=headers,
+            files={"file": ("voice.ogg", data)},
+            data={"model": "whisper-large-v3-turbo"},
+        )
+        resp.raise_for_status()
+    return resp.json().get("text", "").strip() or None

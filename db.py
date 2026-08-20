@@ -17,7 +17,8 @@ def init_db():
             "chat_id INTEGER PRIMARY KEY,"
             "city TEXT DEFAULT 'Mumbai',"
             "lang TEXT DEFAULT 'en',"
-            "digest_time TEXT DEFAULT '07:00')"
+            "digest_time TEXT DEFAULT '07:00',"
+            "voice_reply INTEGER DEFAULT 0)"
         )
         c.execute(
             "CREATE TABLE IF NOT EXISTS history ("
@@ -34,6 +35,14 @@ def init_db():
             "remind_at TEXT,"
             "done INTEGER DEFAULT 0)"
         )
+    _migrate()
+
+
+def _migrate():
+    with _conn() as c:
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(settings)").fetchall()]
+        if "voice_reply" not in cols:
+            c.execute("ALTER TABLE settings ADD COLUMN voice_reply INTEGER DEFAULT 0")
 
 
 # ---- settings ----
@@ -67,6 +76,19 @@ def set_lang(chat_id, lang):
 def set_digest_time(chat_id, digest_time):
     with _conn() as c:
         c.execute("UPDATE settings SET digest_time = ? WHERE chat_id = ?", (digest_time, chat_id))
+
+
+def set_voice_reply(chat_id, enabled):
+    with _conn() as c:
+        c.execute("UPDATE settings SET voice_reply = ? WHERE chat_id = ?", (1 if enabled else 0, chat_id))
+
+
+def get_voice_reply(chat_id):
+    with _conn() as c:
+        row = c.execute(
+            "SELECT voice_reply FROM settings WHERE chat_id = ?", (chat_id,)
+        ).fetchone()
+        return bool(row and row["voice_reply"])
 
 
 def all_chats():

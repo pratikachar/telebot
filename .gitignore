@@ -15,6 +15,11 @@ env/
 *.db
 *.sqlite3
 
+# Personal data - never commit
+commands.txt
+MEMORY.md
+skills.json
+
 # OS / editor
 .DS_Store
 Thumbs.db

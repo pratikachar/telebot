@@ -45,6 +45,20 @@ COMMANDS = [
     ("shot", handlers.shot_command),
     ("install", handlers.install_command),
     ("uninstall", handlers.uninstall_command),
+    ("run", handlers.run_command),
+    ("ui", handlers.ui_command),
+    ("click", handlers.click_command),
+    ("type", handlers.type_command),
+    ("key", handlers.key_command),
+    ("scroll", handlers.scroll_command),
+    ("move", handlers.move_command),
+    ("confirm", handlers.confirm_command),
+    ("cancel", handlers.cancel_command),
+    ("code", handlers.code_command),
+    ("skill", handlers.skill_command),
+    ("remember", handlers.remember_command),
+    ("voice", handlers.voice_command),
+    ("search", handlers.search_command),
 ]
 
 COMMAND_DESCRIPTIONS = [
@@ -79,6 +93,20 @@ COMMAND_DESCRIPTIONS = [
     ("shot", "Take a screenshot"),
     ("install", "Install via winget"),
     ("uninstall", "Uninstall via winget"),
+    ("run", "Run an allowlisted command"),
+    ("ui", "AI vision: pick a PC action"),
+    ("click", "Stage a mouse click"),
+    ("type", "Stage typing text"),
+    ("key", "Stage a key press"),
+    ("scroll", "Stage a scroll"),
+    ("move", "Stage mouse move"),
+    ("confirm", "Confirm staged action"),
+    ("cancel", "Cancel staged action"),
+    ("code", "AI writes & runs Python sandboxed"),
+    ("skill", "Record / run UI skills"),
+    ("remember", "Store a long-term fact"),
+    ("voice", "Toggle spoken replies"),
+    ("search", "Live web search"),
 ]
 
 
@@ -101,6 +129,7 @@ def main() -> None:
         MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.owner_only(handlers.echo))
     )
     application.add_handler(MessageHandler(filters.PHOTO, handlers.owner_only(handlers.photo)))
+    application.add_handler(MessageHandler(filters.VOICE, handlers.owner_only(handlers.voice)))
     application.add_handler(CallbackQueryHandler(handlers.owner_only(handlers.menu_button)))
 
     schedule_all(application.job_queue)

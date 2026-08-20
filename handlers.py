@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import re
 
@@ -11,7 +12,9 @@ import db
 import desktop
 import email_service
 import llm
+from memory import memory_add, memory_read
 import services
+import skills as skills_db
 
 TZ = ZoneInfo("Asia/Kolkata")
 
@@ -79,7 +82,16 @@ HELP = (
     "/summarize <file> - summarize a local text file (owner + desktop only)\n"
     "/create <file> [text] - create a new text file (owner + desktop only)\n"
     "/append <file> <text> - add a line to a file (owner + desktop only)\n"
-    "/delete <file> - delete a file (owner + desktop only)"
+    "/delete <file> - delete a file (owner + desktop only)\n"
+    "/run <name> - run a command from commands.txt (allowlist)\n"
+    "/ui <instruction> - AI looks at screen and picks an action (needs Gemini vision)\n"
+    "/click x y | /type <text> | /key <key> | /scroll <n> | /move x y - stage a PC action, then /confirm\n"
+    "/code <request> - AI writes Python, then /confirm runs it sandboxed (temp, timeout, no network)\n"
+    "/skill learn <name> - record UI steps | /skill stop - save | /skill <name> - run\n"
+    "/remember <fact> - store in long-term memory\n"
+    "/voice on|off - also speak replies aloud (TTS)\n"
+    "/search <query> - live web search\n\n"
+    "Voice notes: send a voice message - I'll transcribe it and treat it as a command or /ask."
     "\n\nThis bot is private - only the owner can use it."
 )
 
@@ -316,13 +328,24 @@ async def translate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    question = " ".join(context.args).strip()
+    question = " ".join(context.args).strip() if context.args else ""
     if not question:
         await update.message.reply_text("Usage: /ask <your question> e.g. /ask what is inflation?")
         return
     chat_id = update.effective_chat.id
     await update.message.reply_text("Thinking \U0001F9E0...")
-    messages = [{"role": "system", "content": CHAT_SYSTEM}]
+    system = CHAT_SYSTEM
+    mem = memory_read()
+    if mem:
+        system += f"\n\nContext you remember about the user:\n{mem}"
+    try:
+        results = await services.web_search(question, num=4)
+        if results:
+            ctx = "\n".join(f"- {title}: {link} - {snippet}" for title, link, snippet in results)
+            system += f"\n\nLive web results (use them if relevant):\n{ctx}"
+    except Exception:
+        pass
+    messages = [{"role": "system", "content": system}]
     messages.extend(db.get_history(chat_id))
     messages.append({"role": "user", "content": question})
     try:
@@ -339,7 +362,31 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     db.add_history(chat_id, "user", question)
     db.add_history(chat_id, "assistant", answer)
     await _reply(update, answer)
+    if db.get_voice_reply(chat_id):
+        await _send_voice(update, answer)
     await update.message.reply_text(f"_via {provider}_")
+
+
+async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = " ".join(context.args).strip()
+    if not query:
+        await update.message.reply_text("Usage: /search <query>")
+        return
+    await update.message.reply_text("Searching the web \U0001F50D...")
+    try:
+        results = await services.web_search(query, num=6)
+        if not results:
+            await update.message.reply_text("No results found.")
+            return
+        lines = [f"\U0001F50D Results for '{query}':\n"]
+        for title, link, snippet in results:
+            lines.append(f"\U00002022 {title}")
+            lines.append(f"  {link}")
+            if snippet:
+                lines.append(f"  {snippet[:150]}")
+        await _reply(update, "\n".join(lines))
+    except Exception as exc:
+        await update.message.reply_text(f"Search failed: {exc}")
 
 
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -663,7 +710,451 @@ async def install_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text(f"Install failed: {exc}")
 
 
+# ---------- run / ui / code / skill / memory / voice ----------
+
+
+async def _send_voice(update, text):
+    """Send a spoken (TTS) version of the answer alongside text. Best effort, never fails."""
+    try:
+        import edge_tts
+        import io as _io
+
+        text = text[:900]
+        com = edge_tts.Communicate(text, "en-IN-PrabhatNeural")
+        buf = _io.BytesIO()
+        async for chunk in com.stream():
+            if chunk["type"] == "audio":
+                buf.write(chunk["data"])
+        if buf.getbuffer().nbytes == 0:
+            return
+        buf.seek(0)
+        await update.message.reply_audio(audio=buf, title="Spoken reply")
+    except Exception:
+        pass
+
+
+async def voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not config.is_owner(update.effective_chat.id):
+        await update.message.reply_text("\U0001F6AB This bot is private.")
+        return
+    await update.message.reply_text("Listening \U0001F3A4...")
+    file = await update.message.voice.get_file()
+    audio_path = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Temp", f"voice_{update.message.message_id}.ogg")
+    await file.download_to_drive(audio_path)
+    try:
+        text = await services.transcribe_voice(audio_path)
+    finally:
+        try:
+            os.remove(audio_path)
+        except OSError:
+            pass
+    if not text:
+        await update.message.reply_text("Could not hear anything. Please try again.")
+        return
+    await update.message.reply_text(f"You said: {text}")
+    if text.startswith("/"):
+        cmd = text.split()[0][1:].lower()
+        args = text.split()[1:]
+        target = COMMAND_FUNCS.get(cmd)
+        if target:
+            context.args = args
+            await target(update, context)
+            return
+    context.args = text.split()
+    await ask_command(update, context)
+
+
+async def remember_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = " ".join(context.args).strip()
+    if not text:
+        await update.message.reply_text("Usage: /remember <fact to remember>")
+        return
+    memory_add(text)
+    await update.message.reply_text("Remembered \U0001F4DD")
+
+
+async def voice_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    arg = (context.args[0] if context.args else "").lower()
+    db.upsert(update.effective_chat.id)
+    if arg in ("on", "1", "yes"):
+        db.set_voice_reply(update.effective_chat.id, True)
+        await update.message.reply_text("Voice replies ON - I'll also speak my answers.")
+    elif arg in ("off", "0", "no"):
+        db.set_voice_reply(update.effective_chat.id, False)
+        await update.message.reply_text("Voice replies OFF - text only.")
+    else:
+        state = "ON" if db.get_voice_reply(update.effective_chat.id) else "OFF"
+        await update.message.reply_text(f"Voice replies are {state}. Usage: /voice on | /voice off")
+
+
+async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    name = " ".join(context.args).strip()
+    if not name:
+        await update.message.reply_text("Usage: /run <command name> (defined in commands.txt)")
+        return
+    await update.message.reply_text(desktop.run_command(name))
+
+
+def _apply_step(step):
+    """Execute one UI step dict and return its result text."""
+    a = step.get("action")
+    if a == "click":
+        return desktop.click(step["x"], step["y"], step.get("button", "left"))
+    if a == "type":
+        return desktop.type_text(step["text"])
+    if a == "key":
+        return desktop.key_press(step["key"])
+    if a == "scroll":
+        return desktop.scroll(step["clicks"])
+    if a == "move":
+        return desktop.move_mouse(step["x"], step["y"])
+    if a == "open":
+        return desktop.open_app(step["app"])
+    if a == "run":
+        return desktop.run_command(step["name"])
+    return f"Unknown action: {a}"
+
+
+async def _stage_ui(update, context, step, desc):
+    context.user_data["pending"] = {"kind": "ui", "step": step}
+    await update.message.reply_text(
+        f"\U0001F4C1 Staged: {desc}\nReply /confirm to do it, /cancel to drop it."
+    )
+
+
+def _record_skill_step(context, step):
+    """While a skill is being recorded, append the confirmed step."""
+    recording = context.user_data.get("skill_recording")
+    if recording:
+        context.user_data.setdefault("skill_steps", []).append(step)
+
+
+async def click_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /click x y  e.g. /click 500 300")
+        return
+    try:
+        x, y = int(context.args[0]), int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("Coordinates must be numbers.")
+        return
+    button = context.args[2] if len(context.args) > 2 else "left"
+    await _stage_ui(update, context, {"action": "click", "x": x, "y": y, "button": button}, f"Click {button} at ({x}, {y})")
+
+
+async def type_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    text = " ".join(context.args)
+    if not text:
+        await update.message.reply_text("Usage: /type <text to type>")
+        return
+    await _stage_ui(update, context, {"action": "type", "text": text}, f"Type: {text[:60]}")
+
+
+async def key_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    key = context.args[0].lower() if context.args else ""
+    if not key:
+        await update.message.reply_text("Usage: /key <key> e.g. /key enter, /key ctrl+alt+del")
+        return
+    await _stage_ui(update, context, {"action": "key", "key": key}, f"Press key: {key}")
+
+
+async def scroll_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    try:
+        clicks = int(context.args[0]) if context.args else 0
+    except ValueError:
+        await update.message.reply_text("Usage: /scroll <amount>  (negative = down)")
+        return
+    if clicks == 0:
+        await update.message.reply_text("Usage: /scroll <amount> e.g. /scroll -3")
+        return
+    await _stage_ui(update, context, {"action": "scroll", "clicks": clicks}, f"Scroll {clicks}")
+
+
+async def move_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    try:
+        x, y = int(context.args[0]), int(context.args[1])
+    except (IndexError, ValueError):
+        await update.message.reply_text("Usage: /move x y")
+        return
+    await _stage_ui(update, context, {"action": "move", "x": x, "y": y}, f"Move mouse to ({x}, {y})")
+
+
+async def ui_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    instruction = " ".join(context.args).strip()
+    if not instruction:
+        await update.message.reply_text("Usage: /ui <instruction> e.g. /ui click the search box")
+        return
+    await update.message.reply_text("Looking at the screen \U0001F50D...")
+    try:
+        img = desktop.screenshot().read()
+    except Exception as exc:
+        await update.message.reply_text(f"Screenshot failed: {exc}")
+        return
+    prompt = (
+        "You control this Windows PC by looking at the screenshot. "
+        f"Task: {instruction}\n"
+        "Reply with ONLY a JSON object describing ONE action, no other text:\n"
+        '{"action":"click","x":<int>,"y":<int>,"button":"left"}\n'
+        '{"action":"type","text":"<text to type>"}\n'
+        '{"action":"key","key":"<key like enter, tab, esc>"}\n'
+        '{"action":"scroll","clicks":<int positive=up negative=down>}\n'
+        '{"action":"move","x":<int>,"y":<int>}\n'
+        '{"action":"open","app":"<app name>"}\n'
+        '{"action":"run","name":"<command name from commands.txt>"}\n'
+        'If unsure, reply {"action":"move","x":0,"y":0}.'
+    )
+    messages = [
+        {"role": "system", "content": "You output only valid JSON."},
+        {"role": "user", "content": prompt},
+    ]
+    try:
+        answer, provider = await llm.chat(messages, image_bytes=img)
+    except Exception as exc:
+        await update.message.reply_text(f"Vision failed: {exc}")
+        return
+    if not answer:
+        await update.message.reply_text("No vision-capable AI configured (needs GEMINI_API_KEY).")
+        return
+    step = _parse_ui_json(answer)
+    if not step:
+        await update.message.reply_text(f"Could not parse the AI action. Raw reply:\n{answer[:500]}")
+        return
+    desc = f"{step.get('action')} {json.dumps({k: v for k, v in step.items() if k != 'action'})}"
+    await _stage_ui(update, context, step, f"{provider}: {desc}")
+
+
+def _parse_ui_json(text):
+    text = text.strip()
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(0))
+    except Exception:
+        return None
+    if not isinstance(data, dict) or "action" not in data:
+        return None
+    return data
+
+
+async def confirm_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    pending = context.user_data.get("pending")
+    if not pending:
+        await update.message.reply_text("Nothing is staged. Use /click, /type, /ui, /code first.")
+        return
+    context.user_data["pending"] = None
+    if pending["kind"] == "ui":
+        try:
+            result = _apply_step(pending["step"])
+        except Exception as exc:
+            await update.message.reply_text(f"Action failed: {exc}")
+            return
+        await update.message.reply_text(result)
+        _record_skill_step(context, pending["step"])
+    elif pending["kind"] == "code":
+        await update.message.reply_text("Running code in a sandbox \U0001F9EA...")
+        output, pngs = desktop.code_exec(pending["code"])
+        await _reply(update, output)
+        for p in pngs:
+            try:
+                with open(p, "rb") as f:
+                    await update.message.reply_photo(photo=f, caption="Generated image")
+            except Exception:
+                pass
+
+
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data["pending"] = None
+    await update.message.reply_text("Staged action cancelled.")
+
+
+async def code_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    request = " ".join(context.args).strip()
+    if not request:
+        await update.message.reply_text(
+            "Usage: /code <python request> e.g. /code 7+5*2 or /code make a plot of x^2"
+        )
+        return
+    await update.message.reply_text("Writing code \U0001F4DD...")
+    prompt = (
+        "Write Python code to do the following. Return ONLY the code inside ```python fences, "
+        f"no explanation.\nTask: {request}"
+    )
+    messages = [
+        {"role": "system", "content": "You write only Python code, no explanations."},
+        {"role": "user", "content": prompt},
+    ]
+    try:
+        answer, provider = await llm.chat(messages)
+    except Exception as exc:
+        await update.message.reply_text(f"Code gen failed: {exc}")
+        return
+    if not answer:
+        await update.message.reply_text("No AI provider configured (needs a free key in .env).")
+        return
+    code = _extract_python(answer)
+    if not code:
+        await update.message.reply_text(f"No code found in reply:\n{answer[:500]}")
+        return
+    preview = code[:1200]
+    context.user_data["pending"] = {"kind": "code", "code": code}
+    await update.message.reply_text(
+        f"{provider} wrote this code:\n\n{preview}\n\nReply /confirm to run it in the sandbox, /cancel to drop it."
+    )
+
+
+def _extract_python(text):
+    m = re.search(r"```(?:python)?\s*(.*?)```", text, re.S)
+    if m:
+        return m.group(1).strip()
+    lines = [l for l in text.strip().splitlines() if not l.startswith("```")]
+    candidate = "\n".join(lines).strip()
+    if candidate:
+        return candidate
+    return None
+
+
+async def skill_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _desktop_ok(update):
+        await update.message.reply_text("Desktop control is disabled or you're not the owner.")
+        return
+    args = context.args or []
+    action = args[0].lower() if args else ""
+    name = args[1] if len(args) > 1 else ""
+    if action == "list":
+        names = skills_db.skill_list()
+        await update.message.reply_text("Skills: " + (", ".join(names) if names else "none"))
+        return
+    if action == "del" and name:
+        if skills_db.skill_delete(name):
+            await update.message.reply_text(f"Deleted skill: {name}")
+        else:
+            await update.message.reply_text(f"Skill not found: {name}")
+        return
+    if action == "learn":
+        if not name:
+            await update.message.reply_text("Usage: /skill learn <name>  then confirm actions, then /skill stop")
+            return
+        context.user_data["skill_recording"] = name
+        context.user_data["skill_steps"] = []
+        await update.message.reply_text(
+            f"Recording skill '{name}'. Now /click /type /key /scroll /move /run and confirm each. "
+            "Send /skill stop when done."
+        )
+        return
+    if action == "stop":
+        steps = context.user_data.pop("skill_steps", [])
+        name = context.user_data.pop("skill_recording", name or "unnamed")
+        if not steps:
+            await update.message.reply_text("Nothing recorded. Cancelled.")
+            return
+        skills_db.skill_add(name, steps)
+        await update.message.reply_text(f"Skill '{name}' saved with {len(steps)} steps.")
+        return
+    if action == "show" and name:
+        skill = skills_db.skill_get(name)
+        if not skill:
+            await update.message.reply_text(f"Skill not found: {name}")
+            return
+        lines = [f"\U0001F4CB Skill '{name}':"]
+        for i, s in enumerate(skill["steps"], 1):
+            lines.append(f"{i}. {s.get('action')} {json.dumps({k: v for k, v in s.items() if k != 'action'})}")
+        await _reply(update, "\n".join(lines))
+        return
+    if action and action not in ("list", "del", "learn", "stop", "show"):
+        name = action
+        skill = skills_db.skill_get(name)
+        if not skill:
+            await update.message.reply_text(f"Skill not found: {name}")
+            return
+        results = []
+        for s in skill["steps"]:
+            try:
+                results.append(_apply_step(s))
+            except Exception as exc:
+                results.append(f"Step {s.get('action')} failed: {exc}")
+        await _reply(update, "\n".join(results))
+        return
+    await update.message.reply_text(
+        "Usage:\n/skill learn <name>  - record steps\n/skill stop - save recording\n"
+        "/skill <name> - run a skill\n/skill list\n/skill show <name>\n/skill del <name>"
+    )
+
+
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"You said: {update.message.text}\n\nUse /menu or /help to see what I can do."
     )
+
+
+COMMAND_FUNCS = {
+    "start": start,
+    "help": help_command,
+    "menu": menu_command,
+    "study": study_command,
+    "news": news_command,
+    "weather": weather_command,
+    "stocks": stocks_command,
+    "movies": movies_command,
+    "books": books_command,
+    "songs": songs_command,
+    "recipe": recipe_command,
+    "translate": translate_command,
+    "ask": ask_command,
+    "search": search_command,
+    "reset": reset_command,
+    "email": email_command,
+    "remind": remind_command,
+    "todo": todo_command,
+    "setcity": setcity_command,
+    "settime": settime_command,
+    "digest": digest_command,
+    "files": files_command,
+    "read": read_command,
+    "summarize": summarize_command,
+    "create": create_command,
+    "append": append_command,
+    "delete": delete_command,
+    "open": open_command,
+    "close": close_command,
+    "shot": shot_command,
+    "install": install_command,
+    "uninstall": uninstall_command,
+    "run": run_command,
+    "ui": ui_command,
+    "click": click_command,
+    "type": type_command,
+    "key": key_command,
+    "scroll": scroll_command,
+    "move": move_command,
+    "confirm": confirm_command,
+    "cancel": cancel_command,
+    "code": code_command,
+    "skill": skill_command,
+    "remember": remember_command,
+    "voice": voice_command,
+}

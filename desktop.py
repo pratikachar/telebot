@@ -209,3 +209,134 @@ def install(app):
     )
     output = (result.stdout or "") + (result.stderr or "")
     return f"winget {pkg}:\n{output[-1500:]}"
+
+
+# ---- allowlisted command execution (commands.txt) ----
+
+COMMANDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "commands.txt")
+
+
+def _load_commands():
+    """Load {name: command} from commands.txt. Lines: name = command  (# comments / blanks skipped)."""
+    cmds = {}
+    if not os.path.isfile(COMMANDS_FILE):
+        return cmds
+    with open(COMMANDS_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                name, _, cmd = line.partition("=")
+                cmds[name.strip()] = cmd.strip()
+    return cmds
+
+
+def run_command(name):
+    """Run an allowlisted command from commands.txt by name. No shell wildcards."""
+    cmds = _load_commands()
+    if not cmds:
+        return "commands.txt is empty or missing. Add lines like:\nping = ping google.com -n 4"
+    if name not in cmds:
+        return f"Unknown command '{name}'. Available: {', '.join(sorted(cmds))}"
+    try:
+        result = subprocess.run(
+            cmds[name],
+            shell=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        if not output.strip():
+            output = "(no output)"
+        return f"$ {cmds[name]}\n{output[-1500:]}"
+    except subprocess.TimeoutExpired:
+        return f"Command '{name}' timed out after 60s."
+    except Exception as exc:
+        return f"Failed to run '{name}': {exc}"
+
+
+# ---- UI automation (pyautogui) ----
+
+def _pyautogui():
+    import pyautogui
+    pyautogui.FAILSAFE = True
+    pyautogui.PAUSE = 0.2
+    return pyautogui
+
+
+def type_text(text):
+    py = _pyautogui()
+    py.write(text, interval=0.02)
+    return f"Typed: {text[:200]}"
+
+
+def key_press(key):
+    py = _pyautogui()
+    py.press(key)
+    return f"Pressed key: {key}"
+
+
+def click(x, y, button="left"):
+    py = _pyautogui()
+    py.click(int(x), int(y), button=button)
+    return f"Clicked ({int(x)}, {int(y)}) with {button}"
+
+
+def scroll(clicks):
+    py = _pyautogui()
+    py.scroll(int(clicks))
+    return f"Scrolled {clicks}"
+
+
+def move_mouse(x, y):
+    py = _pyautogui()
+    py.moveTo(int(x), int(y), duration=0.2)
+    return f"Moved mouse to ({int(x)}, {int(y)})"
+
+
+def get_mouse_pos():
+    py = _pyautogui()
+    x, y = py.position()
+    return f"Mouse at ({x}, {y})"
+
+
+# ---- sandboxed code execution ----
+
+CODE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "code_sandbox")
+
+
+def code_exec(code, timeout=30):
+    """Run Python code in a sandboxed temp folder. Returns (text, list_of_png_paths)."""
+    import shutil
+    import tempfile
+
+    sandbox = tempfile.mkdtemp(prefix="botcode_", dir=CODE_DIR if os.path.isdir(CODE_DIR) else tempfile.gettempdir())
+    script = os.path.join(sandbox, "main.py")
+    with open(script, "w", encoding="utf-8") as f:
+        f.write(code)
+    try:
+        result = subprocess.run(
+            [sys_executable(), script],
+            cwd=sandbox,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        pngs = [os.path.join(sandbox, p) for p in os.listdir(sandbox) if p.lower().endswith(".png")]
+        if not output.strip():
+            output = "(no output)"
+        return output[-4000:], pngs
+    except subprocess.TimeoutExpired:
+        return "Code timed out.", []
+    except Exception as exc:
+        return f"Failed to run code: {exc}", []
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+
+def sys_executable():
+    import sys
+    return sys.executable
